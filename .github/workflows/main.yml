@@ -58,7 +58,7 @@ jobs:
           pip wheel --wheel-dir=./.wheelhouse ./manim || true
           pip install --cache-dir ~/.cache/pip -e ./manim
 
-      - name: Render scene using CLI if available (manim / manimlib), fallback to python -m manimlib
+      - name: Render scene (prefer CLI, fallback to imports) and show diagnostics
         env:
           SCENE_FILE: ${{ inputs.scene_file }}
           SCENE_NAME: ${{ inputs.scene_name }}
@@ -66,23 +66,39 @@ jobs:
           echo "SCENE_FILE=$SCENE_FILE SCENE_NAME=$SCENE_NAME"
           # Prefer the installed CLI script if present
           if command -v manim >/dev/null 2>&1; then
-            echo "Running 'manim' CLI"
+            echo "Found 'manim' CLI:"
+            manim --version || true
             manim "$SCENE_FILE" "$SCENE_NAME" -p -ql
           elif command -v manimlib >/dev/null 2>&1; then
-            echo "Running 'manimlib' CLI"
+            echo "Found 'manimlib' CLI:"
+            manimlib --version || true
             manimlib "$SCENE_FILE" "$SCENE_NAME" -p -ql
-          elif python -c "import manimlib" 2>/dev/null; then
-            echo "Running 'python -m manimlib' fallback"
-            python -m manimlib "$SCENE_FILE" "$SCENE_NAME" -p -ql
+          elif python -c "import importlib,sys; importlib.import_module('manim')" 2>/dev/null; then
+            echo "manim module importable; printing module info and attempting python -m manim (may fail if package lacks __main__):"
+            python -c "import manim,sys; print('manim module:', getattr(manim,'__version__', '<no __version__>'))" || true
+            python -m manim "$SCENE_FILE" "$SCENE_NAME" -p -ql || true
+            echo "If python -m manim failed, try running the 'manim' console script. See diagnostics below."
+            python -V
+            pip list
+            which -a manim || true
+            which -a manimlib || true
+            exit 1
+          elif python -c "import importlib,sys; importlib.import_module('manimlib')" 2>/dev/null; then
+            echo "manimlib module importable; attempting python -m manimlib"
+            python -c "import manimlib,sys; print('manimlib module loaded')" || true
+            python -m manimlib "$SCENE_FILE" "$SCENE_NAME" -p -ql || true
+            python -V
+            pip list
+            which -a manim || true
+            which -a manimlib || true
+            exit 1
           else
-            echo "No usable manim CLI found. Diagnostics:"
+            echo "No usable manim CLI or module found. Diagnostics:"
             python -V
             pip list
             echo "Which manim/manimlib (if any):"
             which -a manim || true
             which -a manimlib || true
-            echo "Console entry points mentioning 'manim':"
-            python -c "import importlib.metadata as m; eps = list(m.entry_points()); print([(e.name, getattr(e,'group',None), str(e.value)) for e in eps if 'manim' in e.name or 'manim' in (getattr(e,'group',None) or '')])"
             exit 1
           fi
 
