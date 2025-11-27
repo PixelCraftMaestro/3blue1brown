@@ -24,17 +24,15 @@ jobs:
         with:
           python-version: '3.10'
 
-      # Cache pip download/build cache
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/pip
             ./.wheelhouse
-          # Key uses requirements file if present; falls back to workflow run OS+python version
-          key: ${{ runner.os }}-pip-${{ matrix.python-version || '3.10' }}-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-3.10-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-${{ matrix.python-version || '3.10' }}-
+            ${{ runner.os }}-pip-3.10-
 
       - name: Install system packages (ffmpeg, TeX, cairo, pango)
         run: |
@@ -45,40 +43,46 @@ jobs:
             texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \
             dvipng
 
-      - name: Upgrade pip & install common Python packages (use cached pip where possible)
+      - name: Upgrade pip & install common Python packages (use cached pip)
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          # Install some common deps first (should be cached on subsequent runs)
           pip install --cache-dir ~/.cache/pip numpy scipy pillow opencv-python tqdm
-          # create a wheelhouse dir in case we build wheels for local editable installs
           mkdir -p ./.wheelhouse
 
-      - name: Clone 3b1b's manim repo and build wheels (speeds installs)
+      - name: Clone 3b1b's manim repo and build wheels
         run: |
           git clone https://github.com/3b1b/manim.git
-          # If manim has a requirements file, install those first (will use pip cache)
           if [ -f manim/requirements.txt ]; then
             pip install --cache-dir ~/.cache/pip -r manim/requirements.txt || true
           fi
-          # Build wheels for manim into a wheelhouse so future runs can just install wheels
           pip wheel --wheel-dir=./.wheelhouse ./manim || true
-          # Install manim in editable mode but prefer installing from wheelhouse for dependencies
           pip install --cache-dir ~/.cache/pip -e ./manim
 
-      - name: Render scene (try manim, fallback to manimlib)
+      - name: Render scene using CLI if available (manim / manimlib), fallback to python -m manimlib
         env:
           SCENE_FILE: ${{ inputs.scene_file }}
           SCENE_NAME: ${{ inputs.scene_name }}
         run: |
-          # Run from repository root so imports like _2023.* resolve
-          if python -c "import manim" 2>/dev/null; then
-            python -m manim "$SCENE_FILE" "$SCENE_NAME" -p -ql
+          echo "SCENE_FILE=$SCENE_FILE SCENE_NAME=$SCENE_NAME"
+          # Prefer the installed CLI script if present
+          if command -v manim >/dev/null 2>&1; then
+            echo "Running 'manim' CLI"
+            manim "$SCENE_FILE" "$SCENE_NAME" -p -ql
+          elif command -v manimlib >/dev/null 2>&1; then
+            echo "Running 'manimlib' CLI"
+            manimlib "$SCENE_FILE" "$SCENE_NAME" -p -ql
           elif python -c "import manimlib" 2>/dev/null; then
+            echo "Running 'python -m manimlib' fallback"
             python -m manimlib "$SCENE_FILE" "$SCENE_NAME" -p -ql
           else
-            echo "No manim or manimlib module found. pip list and python info for debugging:"
+            echo "No usable manim CLI found. Diagnostics:"
             python -V
             pip list
+            echo "Which manim/manimlib (if any):"
+            which -a manim || true
+            which -a manimlib || true
+            echo "Console entry points mentioning 'manim':"
+            python -c "import importlib.metadata as m; eps = list(m.entry_points()); print([(e.name, getattr(e,'group',None), str(e.value)) for e in eps if 'manim' in e.name or 'manim' in (getattr(e,'group',None) or '')])"
             exit 1
           fi
 
