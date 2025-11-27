@@ -58,34 +58,43 @@ jobs:
           pip wheel --wheel-dir=./.wheelhouse ./manim || true
           pip install --cache-dir ~/.cache/pip -e ./manim
 
-      - name: Render scene (prefer CLI, fallback to imports) and show diagnostics
+      - name: Render scene - run CLI from Python scripts dir (robust)
         env:
           SCENE_FILE: ${{ inputs.scene_file }}
           SCENE_NAME: ${{ inputs.scene_name }}
         run: |
           echo "SCENE_FILE=$SCENE_FILE SCENE_NAME=$SCENE_NAME"
-          # Prefer the installed CLI script if present
-          if command -v manim >/dev/null 2>&1; then
-            echo "Found 'manim' CLI:"
-            manim --version || true
+          # Determine pip / Python scripts directory where console scripts are installed
+          SCRIPTDIR=$(python - <<'PY'
+import sysconfig, os
+p = sysconfig.get_path("scripts") or ""
+print(p)
+PY
+)
+          echo "Python scripts dir: '$SCRIPTDIR'"
+          # If manim or manimlib executable exists there, run it
+          if [ -x "${SCRIPTDIR}/manim" ]; then
+            echo "Found manim executable in scripts dir, running it..."
+            "${SCRIPTDIR}/manim" "$SCENE_FILE" "$SCENE_NAME" -p -ql
+          elif [ -x "${SCRIPTDIR}/manimlib" ]; then
+            echo "Found manimlib executable in scripts dir, running it..."
+            "${SCRIPTDIR}/manimlib" "$SCENE_FILE" "$SCENE_NAME" -p -ql
+          elif command -v manim >/dev/null 2>&1; then
+            echo "'manim' found on PATH, running it..."
             manim "$SCENE_FILE" "$SCENE_NAME" -p -ql
-          elif command -v manimlib >/dev/null 2>&1; then
-            echo "Found 'manimlib' CLI:"
-            manimlib --version || true
-            manimlib "$SCENE_FILE" "$SCENE_NAME" -p -ql
           elif python -c "import importlib,sys; importlib.import_module('manim')" 2>/dev/null; then
-            echo "manim module importable; printing module info and attempting python -m manim (may fail if package lacks __main__):"
-            python -c "import manim,sys; print('manim module:', getattr(manim,'__version__', '<no __version__>'))" || true
+            echo "manim module importable but no CLI found; attempting python -m manim (may fail if package lacks __main__):"
+            python -c "import manim; print('manim module version:', getattr(manim,'__version__','<no __version__>'))" || true
             python -m manim "$SCENE_FILE" "$SCENE_NAME" -p -ql || true
-            echo "If python -m manim failed, try running the 'manim' console script. See diagnostics below."
+            echo "If python -m manim failed, printing diagnostics..."
             python -V
             pip list
+            echo "Which manim/manimlib on PATH:"
             which -a manim || true
             which -a manimlib || true
             exit 1
           elif python -c "import importlib,sys; importlib.import_module('manimlib')" 2>/dev/null; then
             echo "manimlib module importable; attempting python -m manimlib"
-            python -c "import manimlib,sys; print('manimlib module loaded')" || true
             python -m manimlib "$SCENE_FILE" "$SCENE_NAME" -p -ql || true
             python -V
             pip list
@@ -93,10 +102,9 @@ jobs:
             which -a manimlib || true
             exit 1
           else
-            echo "No usable manim CLI or module found. Diagnostics:"
+            echo "No usable manim CLI or module found. Diagnostics follow:"
             python -V
             pip list
-            echo "Which manim/manimlib (if any):"
             which -a manim || true
             which -a manimlib || true
             exit 1
