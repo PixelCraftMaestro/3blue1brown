@@ -1,0 +1,59 @@
+name: Render Manim Scene
+
+on:
+  workflow_dispatch:
+    inputs:
+      scene_file:
+        description: 'Python file containing the scene (relative to repo root)'
+        required: true
+        default: '_2023/clt/dice_sims.py'
+      scene_name:
+        description: 'Scene class name to render'
+        required: true
+        default: 'DiceSimulation'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install system packages (ffmpeg, TeX, cairo, pango)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            libcairo2-dev libpango1.0-dev libfreetype6-dev pkg-config \
+            texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \
+            dvipng
+
+      - name: Upgrade pip & install Python packages
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install numpy scipy pillow opencv-python tqdm
+          # Install 3b1b's manim directly from GitHub
+          pip install git+https://github.com/3b1b/manim.git
+
+      - name: Render scene with manim
+        env:
+          SCENE_FILE: ${{ inputs.scene_file }}
+          SCENE_NAME: ${{ inputs.scene_name }}
+        run: |
+          # Run from repository root so imports like _2023.* resolve
+          python -m manim "$SCENE_FILE" "$SCENE_NAME" -p -ql
+
+      - name: List media output (for debug)
+        run: ls -R media || true
+
+      - name: Upload rendered media
+        uses: actions/upload-artifact@v4
+        with:
+          name: manim-media
+          path: |
+            media
